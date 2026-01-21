@@ -1,34 +1,42 @@
+use std::collections::HashMap;
 
-
-use bitcoincore_rpc::RpcApi;
-use bitcoin::{Address, Amount, Network, address::{NetworkUnchecked}};
+use bitcoin::{Address, Amount, Network, address::NetworkUnchecked};
+use bitcoincore_rpc::{RpcApi, jsonrpc::serde_json};
 
 mod rpc;
 
 fn main() {
     let rpc = rpc::rpc_client();
-    let address = "bcrt1qkuhuv5ydxd2e5yvpdt7qq28lthxxlaplgaq3rq".parse::<Address<NetworkUnchecked>>().unwrap().require_network(Network::Regtest).unwrap();
+    let address = "bcrt1qkuhuv5ydxd2e5yvpdt7qq28lthxxlaplgaq3rq"
+        .parse::<Address<NetworkUnchecked>>()
+        .unwrap()
+        .require_network(Network::Regtest)
+        .unwrap();
     let amount = Amount::from_btc(1.1).unwrap();
+    let fee = Amount::from_btc(0.0001).unwrap();
+    let fee = Amount::from_sat(1_000);
+    let utxos = rpc.list_unspent(None, None, None, None, None).unwrap();
 
-// Normal Txn 
+    let utxo = &utxos[0];
 
-    let txid = rpc.send_to_address(
-    &address,
-    amount,
-    Some("Happy-Birthday!"),
-    None,
-    Some(false), // subtract_fee_from_amount
-    None,
-    Some(1),     // conf_target
-    None,
-).unwrap();
+    let inputs = vec![bitcoincore_rpc::json::CreateRawTransactionInput {
+        txid: utxo.txid,
+        vout: utxo.vout,
+        sequence: None,
+    }];
 
-    println!("TX_ID : {:?}",txid);
+    let mut outputs: HashMap<String, Amount> = HashMap::new();
+    outputs.insert(address.to_string(), utxo.amount - fee);
 
-    let mempool = rpc.get_raw_mempool().unwrap();
-    println!("Size of Mempool : {:?}",mempool.len());
+    let raw = rpc
+        .create_raw_transaction_hex(&inputs, &outputs, None, None)
+        .unwrap();
 
-    let tx = rpc.get_transaction(&txid,None).unwrap();
-    println!("Confirmations : {}",tx.info.confirmations);
+    println!("Raw : {}",raw);
 
+    let funded = rpc.fund_raw_transaction(&*raw, None, None).unwrap();
+    let signed = rpc.sign_raw_transaction_with_wallet(&funded.hex, None, None).unwrap();
+
+    let txid = rpc.send_raw_transaction(&signed.hex).unwrap();
+    println!("Raw TX sent: {}", txid);
 }
